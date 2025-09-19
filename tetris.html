@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>Neon Tetris</title>
+<style>
+:root{
+  --cell-size: 28px;
+  --board-w: calc(var(--cell-size) * 10);
+  --board-h: calc(var(--cell-size) * 20);
+}
+body{
+  margin:0;background:#0a0a0f;color:#fff;
+  display:flex;align-items:flex-start;justify-content:center;
+  min-height:100vh;padding:28px;
+  font-family:"Consolas","Noto Sans TC",sans-serif;
+}
+.container{display:flex;gap:20px;align-items:flex-start;}
+.left{background:#111;padding:18px;border-radius:20px;}
+.boardWrapper{
+  border:8px solid transparent;
+  border-radius:14px;
+  border-image:linear-gradient(135deg,#0ff,#f0f,#ff0,#0f0,#08f,#f44,#4ff,#ff80bf) 1;
+  box-shadow:0 0 25px #0ff,0 0 40px #f0f,0 0 60px #ff0;
+  display:inline-block;
+}
+canvas#board{
+  display:block;
+  background:#000;
+  border-radius:8px;
+  image-rendering:pixelated;
+  cursor:pointer;
+  width:var(--board-w);height:var(--board-h);
+}
+.hud{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+button{
+  background:#111;border:2px solid #0ff;padding:8px 12px;border-radius:8px;
+  color:#0ff;cursor:pointer;font-weight:bold;
+  text-shadow:0 0 8px #0ff;
+  box-shadow:0 0 10px #0ff inset,0 0 10px #0ff;
+  transition:all .2s;
+}
+button:hover{background:#0ff;color:#000;text-shadow:none;box-shadow:0 0 20px #0ff;}
+.controlPad{
+  margin-top:12px;display:grid;
+  grid-template-columns:repeat(3,60px);
+  grid-template-rows:repeat(2,60px);
+  gap:12px;justify-content:center;
+}
+.arrowBtn{font-size:22px;}
+.upBtn{grid-column:2;grid-row:1;}
+.leftBtn{grid-column:1;grid-row:2;}
+.downBtn{grid-column:2;grid-row:2;}
+.rightBtn{grid-column:3;grid-row:2;}
+.right{width:280px;background:#111;padding:18px;border-radius:12px;box-shadow:0 0 25px rgba(255,0,255,.3);}
+.panel{background:#111;padding:12px;border-radius:8px;margin-bottom:12px;box-shadow:0 0 15px rgba(255,255,255,.1) inset;}
+.small{font-size:13px;color:#aaa}
+#nextCanvas{background:#000;border-radius:6px;display:block;margin:auto;box-shadow:0 0 10px rgba(255,0,255,.4) inset;}
+.title{font-weight:700;font-size:16px;margin-bottom:8px;color:#f0f;text-shadow:0 0 8px #f0f;}
+ol{margin:6px 0;padding-left:20px}
+.cheat-on{border-color:#ff0;background:#222;color:#ff0;box-shadow:0 0 20px #ff0 inset,0 0 20px #ff0;text-shadow:0 0 8px #ff0;}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="left">
+    <div class="boardWrapper">
+      <canvas id="board" width="200" height="400"></canvas>
+    </div>
+    <div class="hud">
+      <button id="startBtn">開始</button>
+      <button id="pauseBtn">暫停</button>
+      <button id="smileBtn">：)</button>
+      <div style="flex:1"></div>
+      <div class="small">等級 <span id="level">0</span></div>
+      <div class="small">分數 <span id="score">0</span></div>
+      <div class="small">行數 <span id="lines">0</span></div>
+    </div>
+    <div class="controlPad">
+      <button class="arrowBtn upBtn" id="upBtn">旋轉</button>
+      <button class="arrowBtn leftBtn" id="leftBtn">←</button>
+      <button class="arrowBtn downBtn" id="downBtn">↓</button>
+      <button class="arrowBtn rightBtn" id="rightBtn">→</button>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="panel">
+      <div class="small">High Scores</div>
+      <ol id="highscores"></ol>
+      <button id="clearScores">清除排行</button>
+    </div>
+    <div class="panel">
+      <div class="title">Next</div>
+      <canvas id="nextCanvas" width="120" height="120"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const COLS=10,ROWS=20,CELL=20;
+  const neonColors=[
+    "#0ff","#f0f","#ff0","#0f0","#08f","#f44","#4f4","#ff4","#4ff","#ff80bf",
+    "#80ffea","#ffa500","#ff1493","#adff2f","#00ff7f","#7b68ee","#ff6347","#40e0d0","#ff69b4","#87cefa"
+  ];
+  const SHAPES={
+    I:[[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]]],
+    J:[[[1,0,0],[1,1,1],[0,0,0]]],
+    L:[[[0,0,1],[1,1,1],[0,0,0]]],
+    O:[[[1,1],[1,1]]],
+    S:[[[0,1,1],[1,1,0],[0,0,0]]],
+    T:[[[0,1,0],[1,1,1],[0,0,0]]],
+    Z:[[[1,1,0],[0,1,1],[0,0,0]]]
+  };
+  function randColor(){return neonColors[Math.floor(Math.random()*neonColors.length)];}
+  function makeBag(){
+    let p=Object.keys(SHAPES),bag=[];
+    while(bag.length<p.length){
+      let t=p[Math.floor(Math.random()*p.length)];
+      if(!bag.some(b=>b.type===t)) bag.push({type:t,color:randColor()});
+    }
+    return bag;
+  }
+
+  let board=[],current=null,nextQueue=[],
+      score=0,lines=0,level=0,dropInterval=1000,lastDrop=0,running=false,paused=false,cheat=false;
+
+  const ctx=document.getElementById("board").getContext("2d");
+  const nctx=document.getElementById("nextCanvas").getContext("2d");
+  const scoreEl=document.getElementById("score"),linesEl=document.getElementById("lines"),levelEl=document.getElementById("level"),hsEl=document.getElementById("highscores");
+
+  let highs=[];
+  function load(){try{highs=JSON.parse(localStorage.getItem("neontetris")||"[]");}catch{highs=[];}}
+  function save(s){load();highs.push({score:s,date:new Date().toLocaleString()});highs.sort((a,b)=>b.score-a.score);highs=highs.slice(0,5);localStorage.setItem("neontetris",JSON.stringify(highs));}
+  function renderScores(){hsEl.innerHTML="";load();if(!highs.length){hsEl.innerHTML="<li>無</li>";return;}highs.forEach(h=>{let li=document.createElement("li");li.textContent=h.score+" — "+h.date;hsEl.appendChild(li);});}
+
+  function createBoard(){board=Array.from({length:ROWS},()=>Array(COLS).fill(0));}
+  function drawCell(x,y,color){ctx.fillStyle=color;ctx.fillRect(x*CELL,y*CELL,CELL,CELL);ctx.shadowColor=color;ctx.shadowBlur=12;ctx.fillRect(x*CELL,y*CELL,CELL,CELL);ctx.shadowBlur=0;}
+  function drawBoard(){ctx.fillStyle="#000";ctx.fillRect(0,0,COLS*CELL,ROWS*CELL);for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){if(board[r][c])drawCell(c,r,board[r][c]);}if(current)drawPiece(current,current.color);}
+  function drawPiece(p,color){for(let r=0;r<p.shape.length;r++)for(let c=0;c<p.shape[r].length;c++){if(p.shape[r][c]){let y=p.y+r,x=p.x+c;if(y>=0)drawCell(x,y,color);}}}
+  function collides(y,x,shape){for(let r=0;r<shape.length;r++)for(let c=0;c<shape[r].length;c++){if(shape[r][c]){let ny=y+r,nx=x+c;if(nx<0||nx>=COLS||ny>=ROWS)return true;if(ny>=0&&board[ny][nx])return true;}}return false;}
+
+  function spawn(){
+    if(nextQueue.length<2) nextQueue.push(...makeBag());
+    let nxt=nextQueue.shift();
+    current={type:nxt.type,shape:SHAPES[nxt.type][0].map(a=>a.slice()),x:3,y:-2,color:nxt.color};
+    if(collides(current.y,current.x,current.shape)) gameOver();
+  }
+
+  function lock(){
+    for(let r=0;r<current.shape.length;r++){
+      for(let c=0;c<current.shape[r].length;c++){
+        if(current.shape[r][c]){
+          let y=current.y+r, x=current.x+c;
+          if(y<0){ gameOver(); return; }
+          board[y][x]=current.color;
+        }
+      }
+    }
+    clearLines();
+    spawn();
+  }
+
+  function drop(){if(!collides(current.y+1,current.x,current.shape))current.y++;else lock();}
+  function clearLines(){let cleared=0;for(let r=ROWS-1;r>=0;r--){if(board[r].every(v=>v)){board.splice(r,1);board.unshift(Array(COLS).fill(0));cleared++;r++;}}if(cleared){lines+=cleared;score+=cleared*100;level=Math.floor(lines/10);dropInterval=Math.max(200,1000-level*50);}}
+  function updateUI(){scoreEl.textContent=score;linesEl.textContent=lines;levelEl.textContent=level;drawBoard();renderNext();}
+  function renderNext(){nctx.fillStyle="#000";nctx.fillRect(0,0,120,120);if(!nextQueue.length)return;let nxt=nextQueue[0];let s=SHAPES[nxt.type][0];for(let r=0;r<s.length;r++)for(let c=0;c<s[r].length;c++){if(s[r][c]){nctx.fillStyle=nxt.color;nctx.shadowColor=nxt.color;nctx.shadowBlur=12;nctx.fillRect(c*20+20,r*20+20,18,18);nctx.shadowBlur=0;}}}
+  function rotate(){let s=current.shape[0].map((_,i)=>current.shape.map(row=>row[i]).reverse());if(!collides(current.y,current.x,s))current.shape=s;}
+  function gameOver(){running=false;save(score);alert("Game Over! 分數:"+score);renderScores();createBoard();drawBoard();}
+  function loop(t){if(!running||paused){requestAnimationFrame(loop);return;}if(!lastDrop)lastDrop=t;if(t-lastDrop>dropInterval){drop();lastDrop=t;}drawBoard();requestAnimationFrame(loop);}
+
+  // 控制按鈕
+  document.getElementById("startBtn").onclick=()=>{createBoard();score=0;lines=0;level=0;nextQueue=makeBag();spawn();running=true;paused=false;lastDrop=0;updateUI();requestAnimationFrame(loop);};
+  document.getElementById("pauseBtn").onclick=()=>{paused=!paused;};
+  document.getElementById("clearScores").onclick=()=>{localStorage.removeItem("neontetris");renderScores();};
+
+  // 外掛按鈕，帶密碼錯誤提示
+  document.getElementById("smileBtn").onclick=()=>{
+    let p=prompt("請輸入密碼");
+    if(p==="密碼"){
+      cheat=true;
+      document.getElementById("smileBtn").classList.add("cheat-on");
+      alert("外掛啟用! 點擊棋盤可放置 1×1 方塊");
+    } else {
+      alert("密碼錯誤");
+    }
+  };
+
+  document.getElementById("board").addEventListener("click",e=>{
+    if(cheat){
+      let rect=document.getElementById("board").getBoundingClientRect();
+      let x=Math.floor((e.clientX-rect.left)/(rect.width/COLS));
+      let y=Math.floor((e.clientY-rect.top)/(rect.height/ROWS));
+      board[y][x]=randColor();clearLines();updateUI();
+    }
+  });
+
+  // 鍵盤控制
+  document.addEventListener("keydown",e=>{
+    if(!running) return;
+    if(e.key==="ArrowLeft"&&!collides(current.y,current.x-1,current.shape)) current.x--;
+    if(e.key==="ArrowRight"&&!collides(current.y,current.x+1,current.shape)) current.x++;
+    if(e.key==="ArrowDown") drop();
+    if(e.key===" ") while(!collides(current.y+1,current.x,current.shape)) current.y++;
+    if(e.key==="ArrowUp") rotate();
+    updateUI();
+  });
+
+  // 長按功能
+  function holdButton(button, action, interval=100){
+    let timer;
+    const start = () => { action(); timer=setInterval(action, interval); };
+    const stop = () => { clearInterval(timer); };
+    button.addEventListener("mousedown", start);
+    button.addEventListener("mouseup", stop);
+    button.addEventListener("mouseleave", stop);
+  }
+  holdButton(document.getElementById("leftBtn"), ()=>{ if(!running) return; if(!collides(current.y,current.x-1,current.shape)) current.x--; updateUI(); });
+  holdButton(document.getElementById("rightBtn"), ()=>{ if(!running) return; if(!collides(current.y,current.x+1,current.shape)) current.x++; updateUI(); });
+  holdButton(document.getElementById("downBtn"), ()=>{ if(!running) return; drop(); updateUI(); });
+  // 旋轉按鈕（只單擊）
+  document.getElementById("upBtn").addEventListener("click", ()=>{ if(!running) return; rotate(); updateUI(); });
+
+  renderScores();createBoard();drawBoard();
+})();
+</script>
+</body>
+</html>
